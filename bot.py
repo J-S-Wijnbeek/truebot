@@ -300,7 +300,7 @@ class Vertaalbot(discord.Client):
     def __init__(self, store: Store, anthropic: AsyncAnthropic, *, model: str,
                  context_size: int = 10, max_length: int = 1500,
                  per_minute: int = 30, daily_budget: float = 1.0,
-                 input_price: float = 0.10, output_price: float = 0.50,
+                 input_price: float = 0.10, output_price: float = 0.50, slowmode: int = 3,
                  preset_channels: dict[str, int] | None = None, preset_welcome: int | None = None):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -314,6 +314,7 @@ class Vertaalbot(discord.Client):
         self.limiter = RateLimiter(per_minute, daily_budget)
         # Het bedrag van vandaag overleeft een herstart, zodat het dagbudget niet opnieuw begint.
         self.limiter.spent = store.spent(self.limiter.day)
+        self.slowmode = slowmode  # seconden wachttijd per persoon in de taalkanalen
         self.budget_alerts: list[int] = []  # gepasseerde drempels die nog gemeld moeten worden
         self.input_price = input_price    # prijs per miljoen tokens
         self.output_price = output_price
@@ -751,6 +752,9 @@ class Vertaalbot(discord.Client):
                 channel = await guild.create_text_channel(
                     f"chat-{code}", overwrites=overwrites, reason="Vertaalbot: taalkanaal")
             language["channel_id"] = channel.id
+        if channel.slowmode_delay != self.slowmode:
+            # Slowmode voorkomt dat een stortvloed aan berichten de vertalingen laat achterlopen.
+            await channel.edit(slowmode_delay=self.slowmode, reason="Vertaalbot: slowmode")
         await self.webhook_for(channel)
 
     async def post_welcome(self, guild: discord.Guild, config: dict, channel: discord.TextChannel) -> None:
@@ -917,6 +921,7 @@ def main() -> None:
         daily_budget=float(os.getenv("DAILY_BUDGET", "1")),
         input_price=float(os.getenv("INPUT_PRICE_PER_MTOK", "0.10")),
         output_price=float(os.getenv("OUTPUT_PRICE_PER_MTOK", "0.50")),
+        slowmode=int(os.getenv("SLOWMODE_SECONDS", "3")),
         preset_channels=parse_channels(os.getenv("LANGUAGE_CHANNELS", "")),
         preset_welcome=int(os.getenv("WELCOME_CHANNEL_ID") or 0) or None,
     )

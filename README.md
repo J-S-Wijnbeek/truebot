@@ -83,6 +83,7 @@ CONTEXT_MESSAGES=10
 WELCOME_CHANNEL_ID=1544331201664520192
 LANGUAGE_CHANNELS=en:1571606720235446423,ru:1571606767924809909
 RATE_LIMIT_PER_MINUTE=30
+SLOWMODE_SECONDS=3
 DAILY_BUDGET=1
 MAX_MESSAGE_LENGTH=1500
 ```
@@ -96,6 +97,7 @@ MAX_MESSAGE_LENGTH=1500
 | `WELCOME_CHANNEL_ID` | Bestaand kanaal voor de vlagknoppen. Leeg = de bot maakt `#kies-je-taal` aan |
 | `LANGUAGE_CHANNELS` | Bestaande taalkanalen als `code:kanaal-id`, gescheiden door komma's. Leeg = de bot maakt `#chat-ru` en `#chat-en` aan |
 | `RATE_LIMIT_PER_MINUTE` | Maximaal aantal vertalingen per persoon per minuut |
+| `SLOWMODE_SECONDS` | Wachttijd per persoon tussen twee berichten in de taalkanalen. `/setup` stelt dit in; 0 = uit. Beheerders en moderators zijn door Discord vrijgesteld |
 | `DAILY_BUDGET` | Maximaal bedrag per dag aan vertalingen, in dollars (de prijzen van Anthropic zijn in dollars; 1 dollar is iets minder dan 1 euro). De bot telt het werkelijke tokengebruik op |
 | `INPUT_PRICE_PER_MTOK`, `OUTPUT_PRICE_PER_MTOK` | Optioneel. Prijs per miljoen tokens van het gekozen model; standaard 0.10 en 0.50 (Haiku 5.5). Pas aan als je een ander model kiest |
 | `MAX_MESSAGE_LENGTH` | Berichten langer dan dit aantal tekens worden niet vertaald |
@@ -157,6 +159,7 @@ Het logkanaal is alleen zichtbaar voor beheerders. Standaard staat het op `alles
 - **Sleutels:** het token en de API-sleutel staan alleen in `.env`, dat niet in de repo komt. De bot logt ze nergens.
 - **Alleen beheerders:** de commando's zijn verborgen voor gewone leden en controleren het beheerdersrecht nog een keer zelf.
 - **Rem op spam en kosten:** per persoon maximaal `RATE_LIMIT_PER_MINUTE` vertalingen per minuut, voor de hele bot maximaal `DAILY_BUDGET` aan kosten per dag, en geen vertaling boven `MAX_MESSAGE_LENGTH` tekens. Zulke berichten worden wel doorgezet, met het regeltje "niet vertaald", en gemeld in het log. Bij 50% en 80% van het dagbudget komt er een waarschuwing in het logkanaal, en nog een als het budget op is.
+- **Slowmode:** in de taalkanalen kan iedereen één bericht per `SLOWMODE_SECONDS` seconden sturen, zodat de vertalingen niet gaan achterlopen.
 - **Pings:** de bot pingt alleen wie de afzender zelf mocht pingen. Een vertaling kan dus geen `@everyone` toevoegen.
 - **Misleiden van de vertaler:** Claude krijgt de opdracht om berichten alleen te vertalen en instructies in een bericht te negeren.
 - **Geen lussen:** berichten van bots en webhooks worden niet gespiegeld.
