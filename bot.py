@@ -122,31 +122,39 @@ def language_of_channel(config: dict, channel_id: int) -> str | None:
 
 
 class RateLimiter:
-    """Begrenst vertalingen per persoon per minuut en in totaal per dag."""
+    """Begrenst vertalingen per persoon per minuut en de totale kosten per dag."""
 
-    def __init__(self, per_minute: int, per_day: int, clock=time.time):
+    def __init__(self, per_minute: int, daily_budget: float, clock=time.time, spent: float = 0.0):
         self.per_minute = per_minute
-        self.per_day = per_day
+        self.daily_budget = daily_budget
         self.clock = clock
         self.recent: dict[int, deque] = defaultdict(deque)
-        self.day = None
-        self.day_count = 0
+        self.day = self.today()
+        self.spent = spent  # uitgegeven bedrag van vandaag
+
+    def today(self) -> int:
+        return int(self.clock() // 86400)
+
+    def _roll_day(self) -> None:
+        if self.today() != self.day:
+            self.day, self.spent = self.today(), 0.0
+
+    def add_cost(self, amount: float) -> None:
+        self._roll_day()
+        self.spent += amount
 
     def allow(self, user_id: int) -> str | None:
         """Geeft None terug als het mag, anders de reden van weigering."""
+        self._roll_day()
+        if self.daily_budget and self.spent >= self.daily_budget:
+            return "dagbudget op"
         now = self.clock()
-        day = int(now // 86400)
-        if day != self.day:
-            self.day, self.day_count = day, 0
-        if self.per_day and self.day_count >= self.per_day:
-            return "daglimiet"
         stamps = self.recent[user_id]
         while stamps and now - stamps[0] > 60:
             stamps.popleft()
         if self.per_minute and len(stamps) >= self.per_minute:
             return "minuutlimiet"
         stamps.append(now)
-        self.day_count += 1
         return None
 
 
@@ -170,6 +178,7 @@ class Store:
                 message_id INTEGER PRIMARY KEY, origin_id INTEGER, channel_id INTEGER,
                 prefix TEXT, body TEXT, extra TEXT);
             CREATE INDEX IF NOT EXISTS copies_origin ON copies (origin_id);
+            CREATE TABLE IF NOT EXISTS spend (day INTEGER PRIMARY KEY, amount REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS reactions (
                 origin_id INTEGER, channel_id INTEGER, user_id INTEGER, emoji TEXT, user_name TEXT,
                 PRIMARY KEY (origin_id, channel_id, user_id, emoji));
@@ -239,6 +248,18 @@ class Store:
         for origin_id in old:
             self.delete_group(origin_id)
 
+    # Kosten ---------------------------------------------------------------
+
+    def spent(self, day: int) -> float:
+        row = self.db.execute("SELECT amount FROM spend WHERE day = ?", (day,)).fetchone()
+        return row["amount"] if row else 0.0
+
+    def add_spend(self, day: int, amount: float) -> None:
+        self.db.execute(
+            "INSERT INTO spend (day, amount) VALUES (?, ?) "
+            "ON CONFLICT (day) DO UPDATE SET amount = amount + excluded.amount", (day, amount))
+        self.db.commit()
+
     # Reacties -------------------------------------------------------------
 
     def add_reaction(self, origin_id, channel_id, user_id, emoji, user_name) -> None:
@@ -272,7 +293,8 @@ class Store:
 class Vertaalbot(discord.Client):
     def __init__(self, store: Store, anthropic: AsyncAnthropic, *, model: str,
                  context_size: int = 30, max_length: int = 1500,
-                 per_minute: int = 30, per_day: int = 2000,
+                 per_minute: int = 30, daily_budget: float = 1.0,
+                 input_price: float = 0.10, output_price: float = 0.50,
                  preset_channels: dict[str, int] | None = None, preset_welcome: int | None = None):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -283,7 +305,11 @@ class Vertaalbot(discord.Client):
         self.model = model
         self.context_size = context_size
         self.max_length = max_length
-        self.limiter = RateLimiter(per_minute, per_day)
+        self.limiter = RateLimiter(per_minute, daily_budget)
+        # Het bedrag van vandaag overleeft een herstart, zodat het dagbudget niet opnieuw begint.
+        self.limiter.spent = store.spent(self.limiter.day)
+        self.input_price = input_price    # prijs per miljoen tokens
+        self.output_price = output_price
         # Bestaande kanalen uit .env die /setup gebruikt in plaats van nieuwe aan te maken.
         self.preset_channels = preset_channels or {}
         self.preset_welcome = preset_welcome
@@ -360,6 +386,10 @@ class Vertaalbot(discord.Client):
                 "content": f"<context>\n{earlier}\n</context>\n<message author=\"{author}\">\n{text}\n</message>",
             }],
         )
+        cost = (response.usage.input_tokens * self.input_price
+                + response.usage.output_tokens * self.output_price) / 1_000_000
+        self.limiter.add_cost(cost)
+        self.store.add_spend(self.limiter.day, cost)
         result = "".join(block.text for block in response.content if block.type == "text").strip()
         return result or text
 
@@ -861,7 +891,9 @@ def main() -> None:
         context_size=int(os.getenv("CONTEXT_MESSAGES", "30")),
         max_length=int(os.getenv("MAX_MESSAGE_LENGTH", "1500")),
         per_minute=int(os.getenv("RATE_LIMIT_PER_MINUTE", "30")),
-        per_day=int(os.getenv("DAILY_LIMIT", "2000")),
+        daily_budget=float(os.getenv("DAILY_BUDGET", "1")),
+        input_price=float(os.getenv("INPUT_PRICE_PER_MTOK", "0.10")),
+        output_price=float(os.getenv("OUTPUT_PRICE_PER_MTOK", "0.50")),
         preset_channels=parse_channels(os.getenv("LANGUAGE_CHANNELS", "")),
         preset_welcome=int(os.getenv("WELCOME_CHANNEL_ID") or 0) or None,
     )

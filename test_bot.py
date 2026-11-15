@@ -65,14 +65,17 @@ class Limiter(unittest.TestCase):
         now[0] += 61
         self.assertIsNone(limiter.allow(1))
 
-    def test_per_day(self):
+    def test_daily_budget(self):
         now = [1000.0]
-        limiter = bot.RateLimiter(100, 2, clock=lambda: now[0])
+        limiter = bot.RateLimiter(100, 1.0, clock=lambda: now[0])
         self.assertIsNone(limiter.allow(1))
+        limiter.add_cost(0.6)
         self.assertIsNone(limiter.allow(2))
-        self.assertEqual(limiter.allow(3), "daglimiet")
+        limiter.add_cost(0.5)
+        self.assertEqual(limiter.allow(3), "dagbudget op")
         now[0] += 86400
         self.assertIsNone(limiter.allow(3))
+        self.assertEqual(limiter.spent, 0.0)
 
 
 class Storage(unittest.TestCase):
@@ -106,6 +109,13 @@ class Storage(unittest.TestCase):
         self.assertIsNone(self.store.copy(200))
         self.assertEqual(self.store.reactions(100), [])
 
+    def test_spend(self):
+        self.assertEqual(self.store.spent(5), 0.0)
+        self.store.add_spend(5, 0.25)
+        self.store.add_spend(5, 0.5)
+        self.assertEqual(self.store.spent(5), 0.75)
+        self.assertEqual(self.store.spent(6), 0.0)
+
     def test_prune(self):
         self.store.add_origin(1, 1, 1, "A")
         self.store.add_copy(1, 1, 10, body="oud")
@@ -125,6 +135,21 @@ class Client(unittest.IsolatedAsyncioTestCase):
         view = client.language_view({"languages": bot.DEFAULT_LANGUAGES})
         self.assertEqual([item.custom_id for item in view.children],
                          ["vertaalbot:taal:ru", "vertaalbot:taal:en"])
+
+        # Kosten worden uit het tokengebruik berekend en overleven een herstart.
+        from types import SimpleNamespace as NS
+        from unittest.mock import AsyncMock
+        response = NS(content=[NS(type="text", text="Hello")],
+                      usage=NS(input_tokens=1_000_000, output_tokens=1_000_000))
+        client.anthropic = NS(messages=NS(create=AsyncMock(return_value=response)))
+        self.assertEqual(await client.translate("Привет", "Russisch", "Engels", "Ivan", []), "Hello")
+        self.assertAlmostEqual(client.limiter.spent, 0.60)
+        self.assertEqual(client.limiter.allow(1), None)
+        await client.translate("Привет", "Russisch", "Engels", "Ivan", [])
+        self.assertEqual(client.limiter.allow(1), "dagbudget op")
+        restarted = bot.Vertaalbot(client.store, anthropic=None, model="test")
+        self.assertAlmostEqual(restarted.limiter.spent, 1.20)
+        await restarted.close()
         await client.close()
 
 
