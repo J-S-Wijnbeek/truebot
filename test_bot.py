@@ -80,6 +80,36 @@ class Limiter(unittest.TestCase):
         self.assertEqual(limiter.spent, 0.0)
 
 
+class Ordering(unittest.IsolatedAsyncioTestCase):
+    async def test_parallel_translation_keeps_order(self):
+        """Het tweede bericht is eerder vertaald, maar wordt toch na het eerste verstuurd."""
+        import asyncio
+        tails, sent, translating = {}, [], []
+
+        async def handle(name, delay):
+            turn = bot.Turn(tails, 1)
+            translating.append(name)
+            await asyncio.sleep(delay)  # de vertaling
+            async with turn:
+                sent.append(name)
+
+        first = asyncio.create_task(handle("eerste", 0.05))
+        await asyncio.sleep(0)
+        second = asyncio.create_task(handle("tweede", 0.0))
+        await asyncio.sleep(0.01)
+        self.assertEqual(translating, ["eerste", "tweede"])  # beide lopen tegelijk
+        self.assertEqual(sent, [])
+        await asyncio.gather(first, second)
+        self.assertEqual(sent, ["eerste", "tweede"])
+
+    async def test_release_unblocks_next(self):
+        tails = {}
+        failed = bot.Turn(tails, 1)
+        failed.release()
+        async with bot.Turn(tails, 1):
+            pass
+
+
 class Storage(unittest.TestCase):
     def setUp(self):
         self.store = bot.Store(":memory:")

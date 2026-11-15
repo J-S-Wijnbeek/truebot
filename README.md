@@ -84,6 +84,7 @@ WELCOME_CHANNEL_ID=1544331201664520192
 LANGUAGE_CHANNELS=en:1571606720235446423,ru:1571606767924809909
 RATE_LIMIT_PER_MINUTE=30
 SLOWMODE_SECONDS=3
+MAX_CONCURRENT=5
 DAILY_BUDGET=1
 MAX_MESSAGE_LENGTH=1500
 ```
@@ -98,6 +99,7 @@ MAX_MESSAGE_LENGTH=1500
 | `LANGUAGE_CHANNELS` | Bestaande taalkanalen als `code:kanaal-id`, gescheiden door komma's. Leeg = de bot maakt `#chat-ru` en `#chat-en` aan |
 | `RATE_LIMIT_PER_MINUTE` | Maximaal aantal vertalingen per persoon per minuut |
 | `SLOWMODE_SECONDS` | Wachttijd per persoon tussen twee berichten in de taalkanalen. `/setup` stelt dit in; 0 = uit. Beheerders en moderators zijn door Discord vrijgesteld |
+| `MAX_CONCURRENT` | Hoeveel vertalingen tegelijk naar Claude gaan. Berichten worden tegelijk vertaald maar altijd in de juiste volgorde geplaatst |
 | `DAILY_BUDGET` | Maximaal bedrag per dag aan vertalingen, in dollars (de prijzen van Anthropic zijn in dollars; 1 dollar is iets minder dan 1 euro). De bot telt het werkelijke tokengebruik op |
 | `INPUT_PRICE_PER_MTOK`, `OUTPUT_PRICE_PER_MTOK` | Optioneel. Prijs per miljoen tokens van het gekozen model; standaard 0.10 en 0.50 (Haiku 5.5). Pas aan als je een ander model kiest |
 | `MAX_MESSAGE_LENGTH` | Berichten langer dan dit aantal tekens worden niet vertaald |

@@ -164,6 +164,32 @@ class RateLimiter:
         return None
 
 
+class Turn:
+    """Een plek in de rij van een server.
+
+    Vertalingen van verschillende berichten lopen tegelijk, maar het versturen
+    gebeurt in de volgorde waarin de berichten binnenkwamen. Een Turn wordt
+    direct bij binnenkomst aangemaakt en wacht bij `async with` op zijn voorganger.
+    """
+
+    def __init__(self, tails: dict, key: int):
+        self.previous = tails.get(key)
+        self.done = asyncio.get_running_loop().create_future()
+        tails[key] = self.done
+
+    async def __aenter__(self):
+        if self.previous is not None:
+            await self.previous
+        return self
+
+    async def __aexit__(self, *exc):
+        self.release()
+
+    def release(self) -> None:
+        if not self.done.done():
+            self.done.set_result(None)
+
+
 # --------------------------------------------------------------------------
 # Opslag (SQLite)
 # --------------------------------------------------------------------------
@@ -301,6 +327,7 @@ class Vertaalbot(discord.Client):
                  context_size: int = 10, max_length: int = 1500,
                  per_minute: int = 30, daily_budget: float = 1.0,
                  input_price: float = 0.10, output_price: float = 0.50, slowmode: int = 3,
+                 max_concurrent: int = 5,
                  preset_channels: dict[str, int] | None = None, preset_welcome: int | None = None):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -324,7 +351,8 @@ class Vertaalbot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         self.contexts: dict[int, deque] = {}
         self.webhooks: dict[int, discord.Webhook] = {}
-        self.locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self.tails: dict[int, asyncio.Future] = {}  # laatste plek in de rij per server
+        self.api_slots = asyncio.Semaphore(max_concurrent)  # vertalingen die tegelijk mogen lopen
         register_commands(self)
 
     async def setup_hook(self) -> None:
@@ -385,15 +413,16 @@ class Vertaalbot(discord.Client):
 
     async def translate(self, text: str, src: str, dst: str, author: str, context: list[str]) -> str:
         earlier = "\n".join(context) or "(none)"
-        response = await self.anthropic.messages.create(
-            model=self.model,
-            max_tokens=2000,
-            system=SYSTEM_PROMPT.format(src=src, dst=dst),
-            messages=[{
-                "role": "user",
-                "content": f"<context>\n{earlier}\n</context>\n<message author=\"{author}\">\n{text}\n</message>",
-            }],
-        )
+        async with self.api_slots:
+            response = await self.anthropic.messages.create(
+                model=self.model,
+                max_tokens=2000,
+                system=SYSTEM_PROMPT.format(src=src, dst=dst),
+                messages=[{
+                    "role": "user",
+                    "content": f"<context>\n{earlier}\n</context>\n<message author=\"{author}\">\n{text}\n</message>",
+                }],
+            )
         cost = (response.usage.input_tokens * self.input_price
                 + response.usage.output_tokens * self.output_price) / 1_000_000
         self.budget_alerts.extend(self.limiter.add_cost(cost))
@@ -438,17 +467,23 @@ class Vertaalbot(discord.Client):
         if code is None:
             return
 
-        async with self.locks[message.guild.id]:  # houdt de volgorde van berichten gelijk
+        # Direct een plek in de rij nemen en het bericht vastleggen, vóór de eerste await.
+        turn = Turn(self.tails, message.guild.id)
+        self.store.add_origin(message.id, message.guild.id, message.author.id, message.author.display_name)
+        self.store.add_copy(message.id, message.id, message.channel.id, body=message.content)
+        try:
             context = list(await self.context_for(message.channel))
             self.remember(message.channel.id, message.author.display_name, message.content)
-            try:
-                await self.mirror(message, config, code, context)
-            except Exception as error:
-                log.exception("Spiegelen mislukt")
-                await self.audit(message.guild, "⚠️ Spiegelen mislukt",
-                                 f"{type(error).__name__}: {error}", important=True)
+            await self.mirror(message, config, code, context, turn)
+        except Exception as error:
+            log.exception("Spiegelen mislukt")
+            await self.audit(message.guild, "⚠️ Spiegelen mislukt",
+                             f"{type(error).__name__}: {error}", important=True)
+        finally:
+            turn.release()
 
-    async def mirror(self, message: discord.Message, config: dict, code: str, context: list[str]) -> None:
+    async def mirror(self, message: discord.Message, config: dict, code: str,
+                     context: list[str], turn: Turn) -> None:
         guild, author = message.guild, message.author
         text = message.content
         source = config["languages"][code]
@@ -476,23 +511,13 @@ class Vertaalbot(discord.Client):
                 await self.audit(guild, "🛡️ Niet vertaald",
                                  f"{author.mention} in {message.channel.mention}: {blocked}", important=True)
 
-        self.store.add_origin(message.id, guild.id, author.id, author.display_name)
-        self.store.add_copy(message.id, message.id, message.channel.id, body=text)
-
         mentions = discord.AllowedMentions(
             everyone=message.mention_everyone,  # alleen waar als de afzender dat recht had
             users=message.mentions,
             roles=message.role_mentions,
         )
 
-        async def send_to(target_code: str, target: dict):
-            channel = guild.get_channel(target.get("channel_id") or 0)
-            if channel is None:
-                return None
-            body = text
-            if needs_translation:
-                body = await self.translate_or_keep(
-                    guild, text, source["name"], target["name"], author.display_name, context)
+        async def send_to(target_code: str, target: dict, channel, body: str):
             if blocked:
                 extra_here = "\n".join(p for p in (extra, f"{REACTION_MARK}⚠️ niet vertaald") if p)
             else:
@@ -516,18 +541,31 @@ class Vertaalbot(discord.Client):
             self.remember(channel.id, author.display_name, body)
             return f"**{target['flag']} {target_code}:** {body}"
 
-        targets = [(c, lang) for c, lang in config["languages"].items() if c != code]
-        results = await asyncio.gather(*(send_to(c, lang) for c, lang in targets), return_exceptions=True)
+        async def body_for(target: dict) -> str:
+            if not needs_translation:
+                return text
+            return await self.translate_or_keep(
+                guild, text, source["name"], target["name"], author.display_name, context)
 
-        lines = [f"**{source['flag']} {code}:** {text or '(geen tekst)'}"]
-        for result in results:
-            if isinstance(result, Exception):
-                log.error("Doorzetten mislukt: %r", result)
-                await self.audit(guild, "⚠️ Doorzetten mislukt",
-                                 f"{type(result).__name__}: {result}", important=True)
-            elif result:
-                lines.append(result)
-        await self.audit(guild, f"💬 {author.display_name} in #{message.channel.name}", "\n".join(lines))
+        targets = [(c, lang, guild.get_channel(lang.get("channel_id") or 0))
+                   for c, lang in config["languages"].items() if c != code]
+        targets = [target for target in targets if target[2] is not None]
+        # Vertalen gebeurt meteen, tegelijk met andere berichten; versturen wacht op de beurt.
+        bodies = await asyncio.gather(*(body_for(lang) for _, lang, _ in targets))
+
+        async with turn:
+            results = await asyncio.gather(
+                *(send_to(c, lang, channel, body) for (c, lang, channel), body in zip(targets, bodies)),
+                return_exceptions=True)
+            lines = [f"**{source['flag']} {code}:** {text or '(geen tekst)'}"]
+            for result in results:
+                if isinstance(result, Exception):
+                    log.error("Doorzetten mislukt: %r", result)
+                    await self.audit(guild, "⚠️ Doorzetten mislukt",
+                                     f"{type(result).__name__}: {result}", important=True)
+                elif result:
+                    lines.append(result)
+            await self.audit(guild, f"💬 {author.display_name} in #{message.channel.name}", "\n".join(lines))
 
     def reply_prefix(self, message: discord.Message, target_channel_id: int) -> str:
         """Citaatregel met een link naar het beantwoorde bericht in het doelkanaal."""
@@ -579,7 +617,7 @@ class Vertaalbot(discord.Client):
         if code is None or origin is None:
             return
 
-        async with self.locks[guild.id]:
+        async with Turn(self.tails, guild.id):
             old_text = row["body"]
             self.store.update_body(payload.message_id, new_text)
             translate = (is_translatable(new_text) and len(new_text) <= self.max_length
@@ -611,8 +649,14 @@ class Vertaalbot(discord.Client):
 
     async def remove_everywhere(self, guild_id: int | None, message_id: int) -> None:
         guild = self.get_guild(guild_id or 0)
+        if guild is None or self.store.copy(message_id) is None:
+            return
+        async with Turn(self.tails, guild.id):  # wacht tot lopende vertalingen verstuurd zijn
+            await self._remove_everywhere(guild, message_id)
+
+    async def _remove_everywhere(self, guild: discord.Guild, message_id: int) -> None:
         row = self.store.copy(message_id)
-        if guild is None or row is None:
+        if row is None:
             return
         origin = self.store.origin(row["origin_id"])
         copies = self.store.copies_of(row["origin_id"])
@@ -674,7 +718,7 @@ class Vertaalbot(discord.Client):
         guild = self.get_guild(guild_id or 0)
         if guild is None:
             return
-        async with self.locks[guild.id]:
+        async with Turn(self.tails, guild.id):
             for copy in self.store.copies_of(changed["origin_id"]):
                 if copy["channel_id"] == changed["channel_id"]:
                     continue
@@ -922,6 +966,7 @@ def main() -> None:
         input_price=float(os.getenv("INPUT_PRICE_PER_MTOK", "0.10")),
         output_price=float(os.getenv("OUTPUT_PRICE_PER_MTOK", "0.50")),
         slowmode=int(os.getenv("SLOWMODE_SECONDS", "3")),
+        max_concurrent=int(os.getenv("MAX_CONCURRENT", "5")),
         preset_channels=parse_channels(os.getenv("LANGUAGE_CHANNELS", "")),
         preset_welcome=int(os.getenv("WELCOME_CHANNEL_ID") or 0) or None,
     )
