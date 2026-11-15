@@ -69,9 +69,11 @@ class Limiter(unittest.TestCase):
         now = [1000.0]
         limiter = bot.RateLimiter(100, 1.0, clock=lambda: now[0])
         self.assertIsNone(limiter.allow(1))
-        limiter.add_cost(0.6)
+        self.assertEqual(limiter.add_cost(0.4), [])
+        self.assertEqual(limiter.add_cost(0.2), [50])
+        self.assertEqual(limiter.add_cost(0.1), [])
         self.assertIsNone(limiter.allow(2))
-        limiter.add_cost(0.5)
+        self.assertEqual(limiter.add_cost(0.4), [80, 100])
         self.assertEqual(limiter.allow(3), "dagbudget op")
         now[0] += 86400
         self.assertIsNone(limiter.allow(3))
@@ -144,6 +146,14 @@ class Client(unittest.IsolatedAsyncioTestCase):
         client.anthropic = NS(messages=NS(create=AsyncMock(return_value=response)))
         self.assertEqual(await client.translate("Привет", "Russisch", "Engels", "Ivan", []), "Hello")
         self.assertAlmostEqual(client.limiter.spent, 0.60)
+        self.assertEqual(client.budget_alerts, [50])
+        sent = []
+        async def audit(guild, title, text="", important=False):
+            sent.append(title)
+        client.audit = audit
+        await client.report_budget(None)
+        self.assertEqual(sent, ["⚠️ 50% van het dagbudget gebruikt"])
+        self.assertEqual(client.budget_alerts, [])
         self.assertEqual(client.limiter.allow(1), None)
         await client.translate("Привет", "Russisch", "Engels", "Ivan", [])
         self.assertEqual(client.limiter.allow(1), "dagbudget op")

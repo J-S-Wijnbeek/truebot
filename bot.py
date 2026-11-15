@@ -32,6 +32,7 @@ DEFAULT_LANGUAGES = {
     "en": {"name": "Engels", "flag": "🇬🇧"},
 }
 LOG_LEVELS = ("alles", "belangrijk", "uit")
+BUDGET_WARNINGS = (50, 80, 100)  # waarschuwing in het log bij deze percentages van het dagbudget
 
 SYSTEM_PROMPT = """You translate chat messages in a Discord server from {src} to {dst}.
 
@@ -139,9 +140,14 @@ class RateLimiter:
         if self.today() != self.day:
             self.day, self.spent = self.today(), 0.0
 
-    def add_cost(self, amount: float) -> None:
+    def add_cost(self, amount: float) -> list[int]:
+        """Telt kosten op en geeft de zojuist gepasseerde drempels terug, in procenten."""
         self._roll_day()
-        self.spent += amount
+        before, self.spent = self.spent, self.spent + amount
+        if not self.daily_budget:
+            return []
+        return [percent for percent in BUDGET_WARNINGS
+                if before < self.daily_budget * percent / 100 <= self.spent]
 
     def allow(self, user_id: int) -> str | None:
         """Geeft None terug als het mag, anders de reden van weigering."""
@@ -308,6 +314,7 @@ class Vertaalbot(discord.Client):
         self.limiter = RateLimiter(per_minute, daily_budget)
         # Het bedrag van vandaag overleeft een herstart, zodat het dagbudget niet opnieuw begint.
         self.limiter.spent = store.spent(self.limiter.day)
+        self.budget_alerts: list[int] = []  # gepasseerde drempels die nog gemeld moeten worden
         self.input_price = input_price    # prijs per miljoen tokens
         self.output_price = output_price
         # Bestaande kanalen uit .env die /setup gebruikt in plaats van nieuwe aan te maken.
@@ -388,7 +395,7 @@ class Vertaalbot(discord.Client):
         )
         cost = (response.usage.input_tokens * self.input_price
                 + response.usage.output_tokens * self.output_price) / 1_000_000
-        self.limiter.add_cost(cost)
+        self.budget_alerts.extend(self.limiter.add_cost(cost))
         self.store.add_spend(self.limiter.day, cost)
         result = "".join(block.text for block in response.content if block.type == "text").strip()
         return result or text
@@ -396,11 +403,27 @@ class Vertaalbot(discord.Client):
     async def translate_or_keep(self, guild, text, src, dst, author, context) -> str:
         """Vertaalt; bij een fout gaat het origineel door zodat het gesprek niet stokt."""
         try:
-            return await self.translate(text, src, dst, author, context)
+            result = await self.translate(text, src, dst, author, context)
+            await self.report_budget(guild)
+            return result
         except Exception as error:  # API-fout, time-out, enz.
             log.exception("Vertalen mislukt")
             await self.audit(guild, "⚠️ Vertalen mislukt", f"{type(error).__name__}: {error}", important=True)
             return text
+
+    async def report_budget(self, guild: discord.Guild) -> None:
+        """Meldt in het logkanaal wanneer 50%, 80% of 100% van het dagbudget is gebruikt."""
+        alerts, self.budget_alerts = self.budget_alerts, []
+        for percent in alerts:
+            spent, budget = self.limiter.spent, self.limiter.daily_budget
+            if percent >= 100:
+                title = "🛑 Dagbudget op"
+                text = (f"Er is {spent:.2f} van {budget:.2f} gebruikt. Tot middernacht (UTC) worden "
+                        "berichten doorgezet zonder vertaling.")
+            else:
+                title = f"⚠️ {percent}% van het dagbudget gebruikt"
+                text = f"Er is {spent:.2f} van {budget:.2f} gebruikt."
+            await self.audit(guild, title, text, important=True)
 
     # Berichten spiegelen --------------------------------------------------
 

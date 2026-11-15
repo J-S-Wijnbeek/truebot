@@ -156,7 +156,7 @@ Het logkanaal is alleen zichtbaar voor beheerders. Standaard staat het op `alles
 
 - **Sleutels:** het token en de API-sleutel staan alleen in `.env`, dat niet in de repo komt. De bot logt ze nergens.
 - **Alleen beheerders:** de commando's zijn verborgen voor gewone leden en controleren het beheerdersrecht nog een keer zelf.
-- **Rem op spam en kosten:** per persoon maximaal `RATE_LIMIT_PER_MINUTE` vertalingen per minuut, voor de hele bot maximaal `DAILY_BUDGET` aan kosten per dag, en geen vertaling boven `MAX_MESSAGE_LENGTH` tekens. Zulke berichten worden wel doorgezet, met het regeltje "niet vertaald", en gemeld in het log.
+- **Rem op spam en kosten:** per persoon maximaal `RATE_LIMIT_PER_MINUTE` vertalingen per minuut, voor de hele bot maximaal `DAILY_BUDGET` aan kosten per dag, en geen vertaling boven `MAX_MESSAGE_LENGTH` tekens. Zulke berichten worden wel doorgezet, met het regeltje "niet vertaald", en gemeld in het log. Bij 50% en 80% van het dagbudget komt er een waarschuwing in het logkanaal, en nog een als het budget op is.
 - **Pings:** de bot pingt alleen wie de afzender zelf mocht pingen. Een vertaling kan dus geen `@everyone` toevoegen.
 - **Misleiden van de vertaler:** Claude krijgt de opdracht om berichten alleen te vertalen en instructies in een bericht te negeren.
 - **Geen lussen:** berichten van bots en webhooks worden niet gespiegeld.
