@@ -271,8 +271,8 @@ class Store:
 
 class Vertaalbot(discord.Client):
     def __init__(self, store: Store, anthropic: AsyncAnthropic, *, model: str,
-                 context_size: int = 6, max_length: int = 1500,
-                 per_minute: int = 10, per_day: int = 2000,
+                 context_size: int = 30, max_length: int = 1500,
+                 per_minute: int = 30, per_day: int = 2000,
                  preset_channels: dict[str, int] | None = None, preset_welcome: int | None = None):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -858,9 +858,9 @@ def main() -> None:
         Store(os.getenv("DATABASE_PATH", "vertaalbot.db")),
         AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"]),
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-5-5"),
-        context_size=int(os.getenv("CONTEXT_MESSAGES", "6")),
+        context_size=int(os.getenv("CONTEXT_MESSAGES", "30")),
         max_length=int(os.getenv("MAX_MESSAGE_LENGTH", "1500")),
-        per_minute=int(os.getenv("RATE_LIMIT_PER_MINUTE", "10")),
+        per_minute=int(os.getenv("RATE_LIMIT_PER_MINUTE", "30")),
         per_day=int(os.getenv("DAILY_LIMIT", "2000")),
         preset_channels=parse_channels(os.getenv("LANGUAGE_CHANNELS", "")),
         preset_welcome=int(os.getenv("WELCOME_CHANNEL_ID") or 0) or None,
