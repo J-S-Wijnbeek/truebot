@@ -298,7 +298,7 @@ class Store:
 
 class Vertaalbot(discord.Client):
     def __init__(self, store: Store, anthropic: AsyncAnthropic, *, model: str,
-                 context_size: int = 30, max_length: int = 1500,
+                 context_size: int = 10, max_length: int = 1500,
                  per_minute: int = 30, daily_budget: float = 1.0,
                  input_price: float = 0.10, output_price: float = 0.50,
                  preset_channels: dict[str, int] | None = None, preset_welcome: int | None = None):
@@ -911,7 +911,7 @@ def main() -> None:
         Store(os.getenv("DATABASE_PATH", "vertaalbot.db")),
         AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"]),
         model=os.getenv("CLAUDE_MODEL", "claude-haiku-5-5"),
-        context_size=int(os.getenv("CONTEXT_MESSAGES", "30")),
+        context_size=int(os.getenv("CONTEXT_MESSAGES", "10")),
         max_length=int(os.getenv("MAX_MESSAGE_LENGTH", "1500")),
         per_minute=int(os.getenv("RATE_LIMIT_PER_MINUTE", "30")),
         daily_budget=float(os.getenv("DAILY_BUDGET", "1")),
