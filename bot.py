@@ -953,7 +953,8 @@ def main() -> None:
     load_dotenv()
     missing = [key for key in ("DISCORD_TOKEN", "ANTHROPIC_API_KEY") if not os.getenv(key)]
     if missing:
-        raise SystemExit(f"Ontbrekende instellingen in .env: {', '.join(missing)}")
+        raise SystemExit(f"Ontbrekende instellingen in .env: {', '.join(missing)}\n"
+                         "Maak het bestand aan met: python maak_env.py")
 
     bot = Vertaalbot(
         Store(os.getenv("DATABASE_PATH", "vertaalbot.db")),

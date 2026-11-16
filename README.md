@@ -58,6 +58,7 @@ Zet deze bestanden in één map:
 ```
 vertaalbot/
 ├── bot.py
+├── maak_env.py
 ├── test_bot.py
 ├── requirements.txt
 ├── .env.example
@@ -73,7 +74,7 @@ anthropic
 python-dotenv
 ```
 
-Kopieer `.env.example` naar `.env` en vul de twee sleutels in (deel `.env` nooit en zet het niet op GitHub; `.gitignore` houdt het al buiten de repo):
+De makkelijkste manier om `.env` te maken is `python maak_env.py`: dat vraagt om je Discord-token en Anthropic-sleutel en maakt het bestand voor je aan. Met de hand kan ook: kopieer `.env.example` naar `.env` en vul de twee sleutels in (deel `.env` nooit en zet het niet op GitHub; `.gitignore` houdt het al buiten de repo):
 
 ```
 DISCORD_TOKEN=plak-hier-je-discord-token

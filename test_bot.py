@@ -54,6 +54,18 @@ class Helpers(unittest.TestCase):
         self.assertIsNone(bot.language_of_channel(config, 30))
 
 
+class EnvFile(unittest.TestCase):
+    def test_fill_in_replaces_only_the_keys(self):
+        import maak_env
+        template = open(".env.example", encoding="utf-8").read()
+        result = maak_env.fill_in(template, {"DISCORD_TOKEN": "abc", "ANTHROPIC_API_KEY": "sk-ant-x"})
+        self.assertIn("DISCORD_TOKEN=abc\n", result)
+        self.assertIn("ANTHROPIC_API_KEY=sk-ant-x\n", result)
+        self.assertIn("LANGUAGE_CHANNELS=en:1571606720235446423,ru:1571606767924809909", result)
+        self.assertNotIn("plak-hier", result)
+        self.assertEqual(len(result.splitlines()), len(template.splitlines()))
+
+
 class Limiter(unittest.TestCase):
     def test_per_minute(self):
         now = [1000.0]
